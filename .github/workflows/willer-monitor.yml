@@ -2,7 +2,7 @@ name: Willer 0106 seat monitor
 
 on:
   schedule:
-    - cron: "0 * * * *"   # 매 시간 00분(UTC 기준). 한국시간으로는 +9시간.
+    - cron: "0 * * * *" # 매시간 00분(UTC 기준)
   workflow_dispatch: {}
 
 permissions:
@@ -21,10 +21,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install deps (Playwright + Chromium)
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 lxml
+          pip install playwright
+          playwright install --with-deps chromium
 
       - name: Run monitor
         id: mon
@@ -39,11 +40,11 @@ jobs:
           python - << 'PY'
           import json, os
           data = json.loads(os.environ["RAW"])
-          ok = data.get("ok", False)
-          meets = data.get("meets_threshold", False)
+          ok = bool(data.get("ok", False))
+          meets = bool(data.get("meets_threshold", False))
           seats = data.get("available_seats")
-          url = data.get("url")
-          checked_at = data.get("checked_at")
+          url = data.get("url","")
+          checked_at = data.get("checked_at","")
           note = data.get("note","")
 
           def out(k,v):
@@ -70,7 +71,6 @@ jobs:
             const url = "${{ steps.parse.outputs.url }}";
             const checkedAt = "${{ steps.parse.outputs.checked_at }}";
 
-            // 같은 제목의 열려있는 이슈가 있으면 코멘트만 추가, 없으면 새로 생성
             const { data: issues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -79,6 +79,7 @@ jobs:
             });
 
             const existing = issues.find(i => i.title === title);
+
             const body = [
               `0106편 공석이 ${seats}자리로 확인되었다.`,
               `확인시각: ${checkedAt}`,
