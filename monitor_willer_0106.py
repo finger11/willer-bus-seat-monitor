@@ -1,45 +1,25 @@
-import re
 import sys
 import json
 from datetime import datetime, timezone
-
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 URL = "https://willer-travel.com/ko/bus_search/yamanashi/all/tokyo/ikebukuro/day_18/?stockNumberMale=1&stockNumberFemale=1&rid=3&lang=ko"
-TARGET_BUS_NO = "0106"
+TARGET_LABEL = "0106편"
 THRESHOLD = 2
 
-def normalize_spaces(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip()
-
-def extract_seats_from_text(text: str, bus_no: str) -> int | None:
-    """
-    렌더링된 본문 텍스트에서 'Bus No. 0106' 주변의 '공석 N'을 찾아 N 반환.
-    """
-    t = normalize_spaces(text)
-
-    # Bus No 표기 변형 대응
-    m = re.search(rf"Bus\s*No\.?\s*{re.escape(bus_no)}", t, flags=re.IGNORECASE)
-    if not m:
-        m = re.search(rf"Bus\s*No\.?{re.escape(bus_no)}", t, flags=re.IGNORECASE)
-        if not m:
-            return None
-
-    window = t[m.start(): m.start() + 5000]
-
-    # '공석 3' 형태
-    m2 = re.search(r"공석\s*(\d+)", window)
-    if m2:
-        return int(m2.group(1))
-
-    return None
+def to_int_safe(s: str) -> int | None:
+    s = (s or "").strip()
+    if not s:
+        return None
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return int(digits) if digits else None
 
 def main() -> int:
     now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     result = {
         "ok": True,
         "checked_at": now,
-        "bus_no": TARGET_BUS_NO,
+        "target": TARGET_LABEL,
         "threshold": THRESHOLD,
         "available_seats": None,
         "meets_threshold": False,
@@ -50,7 +30,6 @@ def main() -> int:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-
             context = browser.new_context(
                 locale="ko-KR",
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -60,32 +39,62 @@ def main() -> int:
 
             page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-            # 네트워크 idle 대기(안 떨어질 수 있으므로 예외 허용)
+            # JS 렌더링 대기
             try:
                 page.wait_for_load_state("networkidle", timeout=60000)
             except PWTimeoutError:
                 pass
 
-            # 텍스트에 Bus No가 등장할 때까지 추가 대기
-            try:
-                page.wait_for_function(
-                    "() => document.body && document.body.innerText && document.body.innerText.includes('Bus No')",
-                    timeout=20000,
-                )
-            except PWTimeoutError:
-                pass
+            # 핵심 셀렉터가 DOM에 뜰 때까지 대기
+            page.wait_for_selector("span.bin-ttl-box-number.bin-name", timeout=60000)
 
-            body_text = page.inner_text("body")
+            # "0106편" 요소 찾기 (정확히 일치)
+            bus = page.locator("span.bin-ttl-box-number.bin-name", has_text=TARGET_LABEL).first
+
+            if bus.count() == 0:
+                # 혹시 공백/표기 차이 대비(포함 검색)
+                bus = page.locator("span.bin-ttl-box-number.bin-name", has_text="0106").first
+
+            if bus.count() == 0:
+                result["ok"] = False
+                result["note"] = "DOM에서 '0106편' 요소(span.bin-ttl-box-number.bin-name)를 찾지 못했다."
+                print(json.dumps(result, ensure_ascii=False))
+                browser.close()
+                return 0
+
+            # 버스번호가 있는 '카드/행' 컨테이너를 잡고 그 안의 vacancy-num을 찾는다.
+            # 페이지 구조가 달라도 동작하도록 조상 중 가까운 블록을 탐색한다.
+            container = bus.locator(
+                "xpath=ancestor::*[.//span[contains(@class,'vacancy-num')]][1]"
+            )
+
+            if container.count() == 0:
+                result["ok"] = False
+                result["note"] = "0106편 컨테이너에서 vacancy-num을 포함한 상위 요소를 찾지 못했다."
+                print(json.dumps(result, ensure_ascii=False))
+                browser.close()
+                return 0
+
+            vac = container.locator("span.vacancy-num").first
+            if vac.count() == 0:
+                result["ok"] = False
+                result["note"] = "0106편 컨테이너에서 span.vacancy-num을 찾지 못했다."
+                print(json.dumps(result, ensure_ascii=False))
+                browser.close()
+                return 0
+
+            vac_text = vac.inner_text().strip()
+            seats = to_int_safe(vac_text)
+
+            result["available_seats"] = seats
+
+            if seats is None:
+                result["ok"] = False
+                result["note"] = f"vacancy-num 텍스트를 숫자로 파싱 실패: '{vac_text}'"
+            else:
+                result["meets_threshold"] = seats >= THRESHOLD
+
             browser.close()
-
-        seats = extract_seats_from_text(body_text, TARGET_BUS_NO)
-        result["available_seats"] = seats
-
-        if seats is None:
-            result["ok"] = False
-            result["note"] = "렌더링 후에도 버스번호(0106) 또는 공석 정보를 찾지 못했다. 표기/구조가 변경되었을 수 있다."
-        else:
-            result["meets_threshold"] = seats >= THRESHOLD
 
     except Exception as e:
         result["ok"] = False
