@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
-URL = "https://willer-travel.com/ko/bus_search/yamanashi/all/tokyo/ikebukuro/day_18/?stockNumberMale=1&stockNumberFemale=1&rid=3&lang=ko"
+URL = "https://willer-travel.com/ko/bus_search/yamanashi/all/tokyo/ikebukuro/day_17/?stockNumberMale=1&stockNumberFemale=1&rid=3&lang=ko"
 TARGET_LABEL = "0106편"
 THRESHOLD = 2
 
@@ -105,3 +105,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
