@@ -1,0 +1,130 @@
+name: Willer 0106 seat monitor
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # 매 시간 00분(UTC 기준). 한국시간으로는 +9시간.
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml
+
+      - name: Run monitor
+        id: mon
+        run: |
+          OUT=$(python monitor_willer_0106.py)
+          echo "$OUT"
+          echo "json=$OUT" >> $GITHUB_OUTPUT
+
+      - name: Parse result
+        id: parse
+        run: |
+          python - << 'PY'
+          import json, os
+          data = json.loads(os.environ["RAW"])
+          ok = data.get("ok", False)
+          meets = data.get("meets_threshold", False)
+          seats = data.get("available_seats")
+          url = data.get("url")
+          checked_at = data.get("checked_at")
+          note = data.get("note","")
+
+          def out(k,v):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write(f"{k}={v}\n")
+
+          out("ok", "true" if ok else "false")
+          out("meets", "true" if meets else "false")
+          out("seats", "" if seats is None else str(seats))
+          out("url", url)
+          out("checked_at", checked_at)
+          out("note", note.replace("\n"," "))
+          PY
+        env:
+          RAW: ${{ steps.mon.outputs.json }}
+
+      - name: Create or update issue when >=2 seats
+        if: ${{ steps.parse.outputs.ok == 'true' && steps.parse.outputs.meets == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Willer 0106 공석 2자리 이상 발생";
+            const seats = "${{ steps.parse.outputs.seats }}";
+            const url = "${{ steps.parse.outputs.url }}";
+            const checkedAt = "${{ steps.parse.outputs.checked_at }}";
+
+            // 같은 제목의 열려있는 이슈가 있으면 코멘트만 추가, 없으면 새로 생성
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+
+            const existing = issues.find(i => i.title === title);
+            const body = [
+              `0106편 공석이 ${seats}자리로 확인되었다.`,
+              `확인시각: ${checkedAt}`,
+              `링크: ${url}`
+            ].join("\n");
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+
+      - name: Close issue when <2 seats (reset)
+        if: ${{ steps.parse.outputs.ok == 'true' && steps.parse.outputs.meets == 'false' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Willer 0106 공석 2자리 이상 발생";
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+            const existing = issues.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                state: "closed"
+              });
+            }
+
+      - name: Fail loudly if parsing fails
+        if: ${{ steps.parse.outputs.ok == 'false' }}
+        run: |
+          echo "Parsing failed: ${{ steps.parse.outputs.note }}"
+          exit 1
