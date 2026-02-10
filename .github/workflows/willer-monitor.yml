@@ -70,6 +70,7 @@ jobs:
             const seats = "${{ steps.parse.outputs.seats }}";
             const url = "${{ steps.parse.outputs.url }}";
             const checkedAt = "${{ steps.parse.outputs.checked_at }}";
+            const note = "${{ steps.parse.outputs.note }}";
 
             const { data: issues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -83,7 +84,8 @@ jobs:
             const body = [
               `0106편 공석이 ${seats}자리로 확인되었다.`,
               `확인시각: ${checkedAt}`,
-              `링크: ${url}`
+              `링크: ${url}`,
+              `비고: ${note}`
             ].join("\n");
 
             if (existing) {
@@ -124,7 +126,7 @@ jobs:
               });
             }
 
-      - name: Fail loudly if parsing fails
+      - name: Fail loudly if real error occurs
         if: ${{ steps.parse.outputs.ok == 'false' }}
         run: |
           echo "Parsing failed: ${{ steps.parse.outputs.note }}"
