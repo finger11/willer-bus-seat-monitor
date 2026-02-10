@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 # 모니터링 대상 URL
-URL = "https://willer-travel.com/ko/bus_search/yamanashi/all/tokyo/ikebukuro/day_18/?stockNumberMale=1&stockNumberFemale=1&rid=3&lang=ko"
+URL = "https://willer-travel.com/ko/bus_search/yamanashi/all/tokyo/ikebukuro/day_17/?stockNumberMale=1&stockNumberFemale=1&rid=3&lang=ko"
 
 # 타겟 버스/임계치
 TARGET_LABEL = "0106편"
@@ -111,3 +111,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
